@@ -80,11 +80,15 @@ impl FrameBuffer {
     }
 
     pub fn get(&self, x: u16, y: u16) -> RenderCell {
+        debug_assert!(x < self.width && y < self.height, "get() out of bounds");
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         self.cells[idx]
     }
 
     fn set(&mut self, x: u16, y: u16, ch: char, mass: f32, color: ColorId) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
         let idx = (y as usize) * (self.width as usize) + (x as usize);
         let cell = &mut self.cells[idx];
         if mass >= cell.mass {
@@ -162,6 +166,7 @@ fn draw_trail(
     }
     let max_len = word.trail_len.min(TRAIL_LEN);
     for i in 0..max_len {
+        // リングバッファを最新から古い順にアクセス
         let idx = (word.trail_head + TRAIL_LEN - i) % TRAIL_LEN;
         let pos = word.trail[idx];
         let sx = ((pos.x - camera.pos.x) * camera.zoom + half_w).round() as i32;

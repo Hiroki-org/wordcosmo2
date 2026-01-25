@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -14,10 +14,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum Event {
     Merge { a: WordId, b: WordId },
-    Split { id: WordId, parts: u8 },
-    Weather { id: WordId, amount: f32 },
-    Recondense { id: WordId, amount: f32 },
-    SunPulse { center: Vec2, strength: f32 },
+    Split { id: WordId },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +42,7 @@ pub struct World {
     last_collision_candidates: usize,
     effect_cursor: usize,
     text_index: HashMap<String, WordId>,
+    word_indices: HashMap<WordId, usize>,
 }
 
 impl World {
@@ -67,9 +65,11 @@ impl World {
             last_collision_candidates: 0,
             effect_cursor: 0,
             text_index: HashMap::new(),
+            word_indices: HashMap::new(),
         };
         world.spawn_initial_words();
         world.rebuild_text_index();
+        world.rebuild_index_map();
         world
     }
 
@@ -245,7 +245,11 @@ impl World {
                     continue;
                 }
                 let delta = other.pos - pos;
-                let dist_sq = delta.length_sq() + config::GRAVITY_SOFTENING;
+                let raw_dist_sq = delta.length_sq();
+                if raw_dist_sq < 1.0e-6 {
+                    continue;
+                }
+                let dist_sq = raw_dist_sq + config::GRAVITY_SOFTENING;
                 if dist_sq > cutoff_sq {
                     continue;
                 }
@@ -313,9 +317,13 @@ impl World {
                 let delta = b.pos - a.pos;
                 let dist = delta.length();
                 let min_dist = a.radius + b.radius;
-                if dist > 0.0 && dist < min_dist {
-                    let normal = delta * (1.0 / dist);
-                    let overlap = min_dist - dist;
+                if dist < min_dist {
+                    let (normal, dist_safe) = if dist > 1.0e-6 {
+                        (delta * (1.0 / dist), dist)
+                    } else {
+                        (Vec2::new(1.0, 0.0), 0.0)
+                    };
+                    let overlap = min_dist - dist_safe;
                     a.pos -= normal * (overlap * 0.5);
                     b.pos += normal * (overlap * 0.5);
 
@@ -355,8 +363,8 @@ impl World {
                     } else if rel_speed >= config::SPLIT_REL_SPEED_MIN
                         || mass_ratio >= config::TIDAL_MASS_RATIO
                     {
-                        self.events.push(Event::Split { id: a.id, parts: 0 });
-                        self.events.push(Event::Split { id: b.id, parts: 0 });
+                        self.events.push(Event::Split { id: a.id });
+                        self.events.push(Event::Split { id: b.id });
                     }
                 }
             }
@@ -372,10 +380,10 @@ impl World {
             return;
         }
 
-        let mut consumed: Vec<WordId> = Vec::new();
+        let mut consumed: HashSet<WordId> = HashSet::new();
         let mut to_add: Vec<SpawnRequest> = Vec::new();
 
-        let events = self.events.clone();
+        let events = std::mem::take(&mut self.events);
         for event in events {
             match event {
                 Event::Merge { a, b } => {
@@ -404,8 +412,8 @@ impl World {
                             a_clone.pos
                         };
                         let merged_text = Self::merge_text(&a_clone.text, &b_clone.text);
-                        consumed.push(a_clone.id);
-                        consumed.push(b_clone.id);
+                        consumed.insert(a_clone.id);
+                        consumed.insert(b_clone.id);
                         to_add.push(SpawnRequest {
                             text: merged_text,
                             pos,
@@ -416,7 +424,7 @@ impl World {
                         self.spawn_effect_ring(pos, 8, '+', ColorId::Yellow);
                     }
                 }
-                Event::Split { id, parts: _ } => {
+                Event::Split { id } => {
                     if consumed.contains(&id) {
                         continue;
                     }
@@ -429,7 +437,7 @@ impl World {
                     if !base.flags.can_split || base.mass_total <= 1.0 || components.len() < 2 {
                         continue;
                     }
-                    consumed.push(base.id);
+                    consumed.insert(base.id);
 
                     let max_parts = components.len().min(config::SPLIT_PARTS_MAX as usize);
                     let parts = self
@@ -462,24 +470,21 @@ impl World {
                     }
                     self.spawn_effect_ring(base.pos, 12, '*', ColorId::Red);
                 }
-                _ => {}
             }
         }
 
         if !consumed.is_empty() {
             self.words.retain(|w| !consumed.contains(&w.id));
-        }
-        if !consumed.is_empty() {
             self.rebuild_text_index();
+            self.rebuild_index_map();
         }
         for req in to_add {
             self.spawn_or_absorb(req);
         }
-        self.events.clear();
     }
 
     fn find_index(&self, id: WordId) -> Option<usize> {
-        self.words.iter().position(|w| w.id == id)
+        self.word_indices.get(&id).copied()
     }
 
     fn merge_text(a: &str, b: &str) -> String {
@@ -524,9 +529,16 @@ impl World {
         }
     }
 
+    fn rebuild_index_map(&mut self) {
+        self.word_indices.clear();
+        for (idx, word) in self.words.iter().enumerate() {
+            self.word_indices.insert(word.id, idx);
+        }
+    }
+
     fn weathering_step(&mut self, dt: f32) {
         for word in &mut self.words {
-            let amount = word.mass_visible * config::WEATHERING_RATE * dt;
+            let amount = (word.mass_visible * config::WEATHERING_RATE * dt).min(word.mass_visible);
             word.mass_visible -= amount;
             word.mass_dust += amount;
             word.mass_total = word.mass_visible + word.mass_dust;
@@ -625,11 +637,11 @@ impl World {
         if self.effects.len() < config::EFFECT_CAPACITY {
             self.effects.push(effect);
         } else {
-            if self.effect_cursor >= self.effects.len() {
+            if self.effect_cursor >= config::EFFECT_CAPACITY {
                 self.effect_cursor = 0;
             }
             self.effects[self.effect_cursor] = effect;
-            self.effect_cursor = (self.effect_cursor + 1) % self.effects.len();
+            self.effect_cursor = (self.effect_cursor + 1) % config::EFFECT_CAPACITY;
         }
     }
 
@@ -692,6 +704,7 @@ impl World {
         self.words.push(word);
         self.text_index.insert(req.text.clone(), id);
         self.dust_pool.insert(req.text, req.mass_dust);
+        self.word_indices.insert(id, self.words.len() - 1);
     }
 }
 
