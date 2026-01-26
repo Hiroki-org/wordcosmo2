@@ -685,6 +685,31 @@ impl World {
                 self.spawn_effect_ring(effect_pos, 6, '+', ColorId::Magenta);
                 return;
             }
+            if let Some(word) = self.words.iter_mut().find(|w| w.text == req.text) {
+                self.text_index.insert(req.text.clone(), word.id);
+                let combined_mass = word.mass_total + total_mass;
+                let vel = if combined_mass > 0.0 {
+                    (word.vel * word.mass_total + req.vel * total_mass) * (1.0 / combined_mass)
+                } else {
+                    word.vel
+                };
+                let pos = if combined_mass > 0.0 {
+                    (word.pos * word.mass_total + req.pos * total_mass) * (1.0 / combined_mass)
+                } else {
+                    word.pos
+                };
+                word.vel = vel;
+                word.pos = pos;
+                word.mass_visible += req.mass_visible;
+                word.mass_dust += req.mass_dust;
+                word.mass_total = word.mass_visible + word.mass_dust;
+                word.radius =
+                    config::WORD_RADIUS_BASE + word.mass_total * config::WORD_RADIUS_SCALE;
+                self.dust_pool.insert(word.text.clone(), word.mass_dust);
+                let effect_pos = word.pos;
+                self.spawn_effect_ring(effect_pos, 6, '+', ColorId::Magenta);
+                return;
+            }
             self.text_index.remove(&req.text);
         }
 
@@ -714,35 +739,47 @@ impl World {
         if self.words.len() < 2 {
             return;
         }
+        let mut seen: HashSet<String> = HashSet::with_capacity(self.words.len());
+        let mut has_duplicate = false;
+        for word in &self.words {
+            if !seen.insert(word.text.clone()) {
+                has_duplicate = true;
+                break;
+            }
+        }
+        if !has_duplicate {
+            return;
+        }
 
-        let mut index: HashMap<String, usize> = HashMap::new();
+        let mut index: HashMap<String, usize> = HashMap::with_capacity(self.words.len());
+        let mut best_mass: Vec<f32> = Vec::with_capacity(self.words.len());
         let mut merged: Vec<Word> = Vec::with_capacity(self.words.len());
 
         for word in self.words.drain(..) {
             if let Some(&idx) = index.get(&word.text) {
                 let target = &mut merged[idx];
                 let target_mass = target.mass_total;
-                let total_mass = target.mass_total + word.mass_total;
+                let total_mass = target_mass + word.mass_total;
                 if total_mass > 0.0 {
                     target.pos =
-                        (target.pos * target.mass_total + word.pos * word.mass_total)
-                            * (1.0 / total_mass);
+                        (target.pos * target_mass + word.pos * word.mass_total) * (1.0 / total_mass);
                     target.vel =
-                        (target.vel * target.mass_total + word.vel * word.mass_total)
-                            * (1.0 / total_mass);
+                        (target.vel * target_mass + word.vel * word.mass_total) * (1.0 / total_mass);
                 }
                 target.mass_visible += word.mass_visible;
                 target.mass_dust += word.mass_dust;
-                target.mass_total = target.mass_visible + target.mass_dust;
+                target.mass_total = total_mass;
                 target.radius =
                     config::WORD_RADIUS_BASE + target.mass_total * config::WORD_RADIUS_SCALE;
-                if word.mass_total > target_mass {
+                if word.mass_total > best_mass[idx] {
+                    best_mass[idx] = word.mass_total;
                     target.trail = word.trail;
                     target.trail_head = word.trail_head;
                     target.trail_len = word.trail_len;
                 }
             } else {
                 let idx = merged.len();
+                best_mass.push(word.mass_total);
                 index.insert(word.text.clone(), idx);
                 merged.push(word);
             }
