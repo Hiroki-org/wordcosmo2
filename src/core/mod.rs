@@ -11,6 +11,9 @@ use crate::{
     },
 };
 
+const WORD_JOIN_SEP: char = '\u{1F}';
+const WORD_JOIN_DISPLAY: char = '-';
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Merge { a: WordId, b: WordId },
@@ -99,7 +102,11 @@ impl World {
                 let mut text = [' '; TEXT_MAX_DRAW];
                 let mut len = 0;
                 for (idx, ch) in word.text.chars().take(TEXT_MAX_DRAW).enumerate() {
-                    text[idx] = ch;
+                    text[idx] = if ch == WORD_JOIN_SEP {
+                        WORD_JOIN_DISPLAY
+                    } else {
+                        ch
+                    };
                     len = idx + 1;
                 }
                 out.push(WordSnapshot {
@@ -549,11 +556,15 @@ impl World {
         if b.is_empty() {
             return a.to_string();
         }
-        format!("{}-{}", a, b)
+        let mut out = String::with_capacity(a.len() + b.len() + 1);
+        out.push_str(a);
+        out.push(WORD_JOIN_SEP);
+        out.push_str(b);
+        out
     }
 
     fn components(text: &str) -> Vec<String> {
-        text.split('-')
+        text.split(WORD_JOIN_SEP)
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
@@ -569,7 +580,7 @@ impl World {
         let mut idx = 0;
         for i in 0..parts {
             let take = base + if i < rem { 1 } else { 0 };
-            let group = components[idx..idx + take].join("-");
+            let group = components[idx..idx + take].join(&WORD_JOIN_SEP.to_string());
             out.push(group);
             idx += take;
         }

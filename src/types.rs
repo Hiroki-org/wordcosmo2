@@ -83,7 +83,7 @@ impl Mul<Vec2> for f32 {
 
 pub type WordId = u64;
 
-pub const TEXT_MAX_DRAW: usize = 12;
+pub const TEXT_MAX_DRAW: usize = 120;
 pub const TRAIL_LEN: usize = 10;
 
 #[derive(Clone, Debug)]
