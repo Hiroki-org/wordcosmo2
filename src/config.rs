@@ -43,3 +43,5 @@ pub const SUN_PULSE_STRENGTH: f32 = 14.0;
 
 pub const EFFECT_CAPACITY: usize = 512;
 pub const EFFECT_TTL: f32 = 0.6;
+
+pub const WORD_JOIN_SEP: char = '\u{1F}';
