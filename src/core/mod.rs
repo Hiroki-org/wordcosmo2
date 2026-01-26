@@ -662,55 +662,21 @@ impl World {
         let total_mass = req.mass_visible + req.mass_dust;
         if let Some(&id) = self.text_index.get(&req.text) {
             if let Some(word) = self.words.iter_mut().find(|w| w.id == id) {
-                let combined_mass = word.mass_total + total_mass;
-                let vel = if combined_mass > 0.0 {
-                    (word.vel * word.mass_total + req.vel * total_mass) * (1.0 / combined_mass)
-                } else {
-                    word.vel
-                };
-                let pos = if combined_mass > 0.0 {
-                    (word.pos * word.mass_total + req.pos * total_mass) * (1.0 / combined_mass)
-                } else {
-                    word.pos
-                };
-                word.vel = vel;
-                word.pos = pos;
-                word.mass_visible += req.mass_visible;
-                word.mass_dust += req.mass_dust;
-                word.mass_total = word.mass_visible + word.mass_dust;
-                word.radius =
-                    config::WORD_RADIUS_BASE + word.mass_total * config::WORD_RADIUS_SCALE;
-                self.dust_pool.insert(word.text.clone(), word.mass_dust);
-                let effect_pos = word.pos;
-                self.spawn_effect_ring(effect_pos, 6, '+', ColorId::Magenta);
-                return;
-            }
-            if let Some(word) = self.words.iter_mut().find(|w| w.text == req.text) {
-                self.text_index.insert(req.text.clone(), word.id);
-                let combined_mass = word.mass_total + total_mass;
-                let vel = if combined_mass > 0.0 {
-                    (word.vel * word.mass_total + req.vel * total_mass) * (1.0 / combined_mass)
-                } else {
-                    word.vel
-                };
-                let pos = if combined_mass > 0.0 {
-                    (word.pos * word.mass_total + req.pos * total_mass) * (1.0 / combined_mass)
-                } else {
-                    word.pos
-                };
-                word.vel = vel;
-                word.pos = pos;
-                word.mass_visible += req.mass_visible;
-                word.mass_dust += req.mass_dust;
-                word.mass_total = word.mass_visible + word.mass_dust;
-                word.radius =
-                    config::WORD_RADIUS_BASE + word.mass_total * config::WORD_RADIUS_SCALE;
+                Self::absorb_into_word(word, &req, total_mass);
                 self.dust_pool.insert(word.text.clone(), word.mass_dust);
                 let effect_pos = word.pos;
                 self.spawn_effect_ring(effect_pos, 6, '+', ColorId::Magenta);
                 return;
             }
             self.text_index.remove(&req.text);
+            if let Some(word) = self.words.iter_mut().find(|w| w.text == req.text) {
+                self.text_index.insert(req.text.clone(), word.id);
+                Self::absorb_into_word(word, &req, total_mass);
+                self.dust_pool.insert(word.text.clone(), word.mass_dust);
+                let effect_pos = word.pos;
+                self.spawn_effect_ring(effect_pos, 6, '+', ColorId::Magenta);
+                return;
+            }
         }
 
         let id = self.next_id();
@@ -739,10 +705,10 @@ impl World {
         if self.words.len() < 2 {
             return;
         }
-        let mut seen: HashSet<String> = HashSet::with_capacity(self.words.len());
+        let mut seen: HashSet<&str> = HashSet::with_capacity(self.words.len());
         let mut has_duplicate = false;
         for word in &self.words {
-            if !seen.insert(word.text.clone()) {
+            if !seen.insert(word.text.as_str()) {
                 has_duplicate = true;
                 break;
             }
@@ -788,6 +754,26 @@ impl World {
         self.words = merged;
         self.rebuild_text_index();
         self.rebuild_index_map();
+    }
+
+    fn absorb_into_word(word: &mut Word, req: &SpawnRequest, total_mass: f32) {
+        let combined_mass = word.mass_total + total_mass;
+        let vel = if combined_mass > 0.0 {
+            (word.vel * word.mass_total + req.vel * total_mass) * (1.0 / combined_mass)
+        } else {
+            word.vel
+        };
+        let pos = if combined_mass > 0.0 {
+            (word.pos * word.mass_total + req.pos * total_mass) * (1.0 / combined_mass)
+        } else {
+            word.pos
+        };
+        word.vel = vel;
+        word.pos = pos;
+        word.mass_visible += req.mass_visible;
+        word.mass_dust += req.mass_dust;
+        word.mass_total = word.mass_visible + word.mass_dust;
+        word.radius = config::WORD_RADIUS_BASE + word.mass_total * config::WORD_RADIUS_SCALE;
     }
 }
 
