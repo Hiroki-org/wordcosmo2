@@ -108,14 +108,31 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     let chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([
-                            Constraint::Length(3),
+                            Constraint::Length(4),
                             Constraint::Min(3),
                             Constraint::Length(3),
                         ])
                         .split(size);
 
+                    let debug = stats.gravity_debug;
+                    let debug_line = if debug.sample_index >= 0 {
+                        format!(
+                            "grav dbg: cand {} -> {} | |a| {:.3} | |dv| {:.3} | r_near {:.2} | cut:{} | m_near {:.2} | subvis:{}",
+                            debug.candidates,
+                            debug.candidates_after_cutoff,
+                            debug.acc_mag,
+                            debug.dv_mag,
+                            debug.sample_r,
+                            if debug.sample_cutoff_rejected { "yes" } else { "no" },
+                            debug.sample_other_mass_visible,
+                            if debug.sample_other_subvisible { "yes" } else { "no" }
+                        )
+                    } else {
+                        "grav dbg: none".to_string()
+                    };
+
                     let header = Paragraph::new(format!(
-                        "visible: {} | dust: {} | total: {} | m_vis: {:.1} | m_total: {:.1} | gCand: {:.1} | cCand: {:.1} | sim fps: {:.1} | render fps: {:.1}",
+                        "visible: {} | dust: {} | total: {} | m_vis: {:.1} | m_total: {:.1} | gCand: {:.1} | cCand: {:.1} | sim fps: {:.1} | render fps: {:.1}\n{}",
                         stats.visible_count,
                         stats.dust_count,
                         stats.total_words,
@@ -124,7 +141,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                         stats.gravity_candidates_avg,
                         stats.collision_candidates_avg,
                         sim_fps,
-                        render_fps
+                        render_fps,
+                        debug_line
                     ))
                     .block(Block::default().borders(Borders::ALL).title("wordcosmo2"));
                     frame.render_widget(header, chunks[0]);

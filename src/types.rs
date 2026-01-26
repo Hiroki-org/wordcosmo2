@@ -154,4 +154,18 @@ pub struct WorldStats {
     pub total_mass: f32,
     pub gravity_candidates_avg: f32,
     pub collision_candidates_avg: f32,
+    pub gravity_debug: GravityDebugStats,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct GravityDebugStats {
+    pub sample_index: i32,
+    pub candidates: usize,
+    pub candidates_after_cutoff: usize,
+    pub acc_mag: f32,
+    pub dv_mag: f32,
+    pub sample_r: f32,
+    pub sample_cutoff_rejected: bool,
+    pub sample_other_mass_visible: f32,
+    pub sample_other_subvisible: bool,
 }

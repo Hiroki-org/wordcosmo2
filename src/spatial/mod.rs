@@ -33,10 +33,15 @@ impl SpatialHash {
     }
 
     pub fn query_neighbors(&self, pos: Vec2, out: &mut Vec<usize>) {
+        self.query_neighbors_range(pos, 1, out);
+    }
+
+    pub fn query_neighbors_range(&self, pos: Vec2, range: i32, out: &mut Vec<usize>) {
         out.clear();
         let (cx, cy) = self.cell_key(pos);
-        for dy in -1..=1 {
-            for dx in -1..=1 {
+        let range = range.max(0);
+        for dy in -range..=range {
+            for dx in -range..=range {
                 let key = (cx + dx, cy + dy);
                 if let Some(indices) = self.cells.get(&key) {
                     out.extend_from_slice(indices);

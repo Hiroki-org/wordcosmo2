@@ -6,8 +6,8 @@ use crate::{
     config,
     spatial::SpatialHash,
     types::{
-        ColorId, EffectParticle, Vec2, Word, WordFlags, WordId, WordSnapshot, WorldStats,
-        TEXT_MAX_DRAW, TRAIL_LEN,
+        ColorId, EffectParticle, GravityDebugStats, Vec2, Word, WordFlags, WordId, WordSnapshot,
+        WorldStats, TEXT_MAX_DRAW, TRAIL_LEN,
     },
 };
 
@@ -40,6 +40,7 @@ pub struct World {
     collision_candidates: usize,
     last_grav_candidates: usize,
     last_collision_candidates: usize,
+    gravity_debug: GravityDebugStats,
     effect_cursor: usize,
     text_index: HashMap<String, WordId>,
     word_indices: HashMap<WordId, usize>,
@@ -50,7 +51,7 @@ impl World {
         let mut world = Self {
             words: Vec::new(),
             events: Vec::new(),
-            spatial: SpatialHash::new(config::CELL_SIZE),
+            spatial: SpatialHash::new(config::SPATIAL_CELL_SIZE),
             sun: None,
             effects: Vec::with_capacity(config::EFFECT_CAPACITY),
             dust_pool: HashMap::new(),
@@ -63,6 +64,7 @@ impl World {
             collision_candidates: 0,
             last_grav_candidates: 0,
             last_collision_candidates: 0,
+            gravity_debug: GravityDebugStats::default(),
             effect_cursor: 0,
             text_index: HashMap::new(),
             word_indices: HashMap::new(),
@@ -140,6 +142,7 @@ impl World {
             stats.collision_candidates_avg =
                 self.last_collision_candidates as f32 / self.words.len() as f32;
         }
+        stats.gravity_debug = self.gravity_debug;
         stats
     }
 
@@ -228,35 +231,80 @@ impl World {
     fn apply_gravity_nearby(&mut self, dt: f32) {
         self.acc.clear();
         self.acc.resize(self.words.len(), Vec2::ZERO);
-        let cutoff_sq = config::GRAVITY_CUTOFF * config::GRAVITY_CUTOFF;
+        let cutoff = config::GRAVITY_CUTOFF;
+        let mut debug = GravityDebugStats::default();
+        debug.sample_index = -1;
+        let sample_index = self
+            .words
+            .iter()
+            .position(|w| w.mass_visible >= config::MIN_VISIBLE_MASS)
+            .or_else(|| if self.words.is_empty() { None } else { Some(0) });
+        if let Some(idx) = sample_index {
+            debug.sample_index = idx as i32;
+        }
+        let mut sample_nearest_r_sq = f32::INFINITY;
 
         for i in 0..self.words.len() {
             let pos = self.words[i].pos;
-            self.spatial.query_neighbors(pos, &mut self.neighbors);
+            self.spatial.query_neighbors_range(
+                pos,
+                config::SPATIAL_QUERY_RANGE_GRAVITY,
+                &mut self.neighbors,
+            );
             if !self.neighbors.is_empty() {
                 self.grav_candidates += self.neighbors.len().saturating_sub(1);
             }
             let mut acc = Vec2::ZERO;
+            let is_sample = debug.sample_index == i as i32;
+            if is_sample {
+                debug.candidates = self.neighbors.len().saturating_sub(1);
+            }
+            let mut candidates_after_cutoff = 0usize;
             for &j in &self.neighbors {
                 if i == j {
                     continue;
                 }
                 let other = &self.words[j];
-                if other.mass_visible < config::MIN_VISIBLE_MASS {
-                    continue;
-                }
                 let delta = other.pos - pos;
                 let raw_dist_sq = delta.length_sq();
                 if raw_dist_sq < 1.0e-6 {
                     continue;
                 }
-                let dist_sq = raw_dist_sq + config::GRAVITY_SOFTENING;
-                if dist_sq > cutoff_sq {
+                let r = raw_dist_sq.sqrt();
+                let other_mass_visible = other.mass_visible;
+                let other_subvisible = other_mass_visible < config::MIN_VISIBLE_MASS;
+                if is_sample && raw_dist_sq < sample_nearest_r_sq {
+                    sample_nearest_r_sq = raw_dist_sq;
+                    debug.sample_r = r;
+                    debug.sample_cutoff_rejected = r >= cutoff;
+                    debug.sample_other_mass_visible = other_mass_visible;
+                    debug.sample_other_subvisible = other_subvisible;
+                }
+                let weight = gravity_cutoff_weight(r, cutoff);
+                if weight <= 0.0 {
                     continue;
                 }
-                let dir = delta.normalize();
-                let force = config::GRAVITY_G * other.mass_visible / dist_sq;
+                let dist_sq = raw_dist_sq + config::GRAVITY_SOFTENING;
+                let dir = delta * (1.0 / r);
+                let mass_for_gravity = other_mass_visible.max(config::GRAVITY_MIN_MASS);
+                let force = config::GRAVITY_G * mass_for_gravity * weight / dist_sq;
                 acc += dir * force;
+                if is_sample {
+                    candidates_after_cutoff += 1;
+                }
+            }
+            let mut acc_len = acc.length();
+            let mut dv = acc_len * dt;
+            if acc_len > 0.0 && dv > config::GRAVITY_DV_MAX {
+                let scale = config::GRAVITY_DV_MAX / dv;
+                acc = acc * scale;
+                acc_len *= scale;
+                dv = acc_len * dt;
+            }
+            if is_sample {
+                debug.candidates_after_cutoff = candidates_after_cutoff;
+                debug.acc_mag = acc_len;
+                debug.dv_mag = dv;
             }
             self.acc[i] = acc;
         }
@@ -268,6 +316,8 @@ impl World {
         if let Some(sun) = self.sun {
             self.apply_sun_pulse(sun, dt);
         }
+
+        self.gravity_debug = debug;
     }
 
     fn integrate(&mut self, dt: f32) {
@@ -297,7 +347,11 @@ impl World {
     fn resolve_collisions(&mut self) {
         for i in 0..self.words.len() {
             let pos = self.words[i].pos;
-            self.spatial.query_neighbors(pos, &mut self.neighbors);
+            self.spatial.query_neighbors_range(
+                pos,
+                config::SPATIAL_QUERY_RANGE_COLLISION,
+                &mut self.neighbors,
+            );
             if !self.neighbors.is_empty() {
                 self.collision_candidates += self.neighbors.len().saturating_sub(1);
             }
@@ -775,6 +829,28 @@ impl World {
         word.mass_total = word.mass_visible + word.mass_dust;
         word.radius = config::WORD_RADIUS_BASE + word.mass_total * config::WORD_RADIUS_SCALE;
     }
+}
+
+fn gravity_cutoff_weight(r: f32, cutoff: f32) -> f32 {
+    if cutoff <= 0.0 {
+        return 0.0;
+    }
+    let fade_start = cutoff * config::GRAVITY_CUTOFF_FADE_START;
+    if r >= cutoff {
+        0.0
+    } else if r <= fade_start {
+        1.0
+    } else {
+        1.0 - smoothstep(fade_start, cutoff, r)
+    }
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    if edge1 <= edge0 {
+        return if x < edge1 { 1.0 } else { 0.0 };
+    }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 struct SpawnRequest {

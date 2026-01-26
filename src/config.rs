@@ -5,13 +5,18 @@ pub const DT: f32 = 1.0 / SIM_HZ;
 pub const WORLD_HALF_WIDTH: f32 = 120.0;
 pub const WORLD_HALF_HEIGHT: f32 = 60.0;
 
-pub const CELL_SIZE: f32 = 6.0;
+pub const SPATIAL_CELL_SIZE: f32 = 16.0;
+pub const SPATIAL_QUERY_RANGE_GRAVITY: i32 = 5; // 5 => 11x11
+pub const SPATIAL_QUERY_RANGE_COLLISION: i32 = 1; // 1 => 3x3
 
 pub const INIT_WORDS: usize = 24;
 
-pub const GRAVITY_G: f32 = 18.0;
-pub const GRAVITY_SOFTENING: f32 = 2.0;
-pub const GRAVITY_CUTOFF: f32 = 48.0;
+pub const GRAVITY_G: f32 = 80.0;
+pub const GRAVITY_SOFTENING: f32 = 4.0;
+pub const GRAVITY_CUTOFF: f32 = 96.0;
+pub const GRAVITY_CUTOFF_FADE_START: f32 = 0.7; // cutoff比で減衰開始
+pub const GRAVITY_DV_MAX: f32 = 2.5; // 1tickの速度変化量上限
+pub const GRAVITY_MIN_MASS: f32 = 0.2; // 低質量でも最低限の引力源にする
 
 pub const BOUNCE_DAMP: f32 = 0.9;
 
