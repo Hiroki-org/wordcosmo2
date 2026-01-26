@@ -82,6 +82,7 @@ impl World {
         self.resolve_collisions();
         self.emit_events();
         self.apply_events();
+        self.consolidate_duplicates();
         self.weathering_step(dt);
         self.autogenesis_step(dt);
         self.update_effects(dt);
@@ -537,12 +538,13 @@ impl World {
     }
 
     fn weathering_step(&mut self, dt: f32) {
+        self.dust_pool.clear();
         for word in &mut self.words {
             let amount = (word.mass_visible * config::WEATHERING_RATE * dt).min(word.mass_visible);
             word.mass_visible -= amount;
             word.mass_dust += amount;
             word.mass_total = word.mass_visible + word.mass_dust;
-            self.dust_pool.insert(word.text.clone(), word.mass_dust);
+            *self.dust_pool.entry(word.text.clone()).or_insert(0.0) += word.mass_dust;
         }
     }
 
@@ -681,8 +683,9 @@ impl World {
                 self.dust_pool.insert(word.text.clone(), word.mass_dust);
                 let effect_pos = word.pos;
                 self.spawn_effect_ring(effect_pos, 6, '+', ColorId::Magenta);
+                return;
             }
-            return;
+            self.text_index.remove(&req.text);
         }
 
         let id = self.next_id();
@@ -705,6 +708,49 @@ impl World {
         self.text_index.insert(req.text.clone(), id);
         self.dust_pool.insert(req.text, req.mass_dust);
         self.word_indices.insert(id, self.words.len() - 1);
+    }
+
+    fn consolidate_duplicates(&mut self) {
+        if self.words.len() < 2 {
+            return;
+        }
+
+        let mut index: HashMap<String, usize> = HashMap::new();
+        let mut merged: Vec<Word> = Vec::with_capacity(self.words.len());
+
+        for word in self.words.drain(..) {
+            if let Some(&idx) = index.get(&word.text) {
+                let target = &mut merged[idx];
+                let target_mass = target.mass_total;
+                let total_mass = target.mass_total + word.mass_total;
+                if total_mass > 0.0 {
+                    target.pos =
+                        (target.pos * target.mass_total + word.pos * word.mass_total)
+                            * (1.0 / total_mass);
+                    target.vel =
+                        (target.vel * target.mass_total + word.vel * word.mass_total)
+                            * (1.0 / total_mass);
+                }
+                target.mass_visible += word.mass_visible;
+                target.mass_dust += word.mass_dust;
+                target.mass_total = target.mass_visible + target.mass_dust;
+                target.radius =
+                    config::WORD_RADIUS_BASE + target.mass_total * config::WORD_RADIUS_SCALE;
+                if word.mass_total > target_mass {
+                    target.trail = word.trail;
+                    target.trail_head = word.trail_head;
+                    target.trail_len = word.trail_len;
+                }
+            } else {
+                let idx = merged.len();
+                index.insert(word.text.clone(), idx);
+                merged.push(word);
+            }
+        }
+
+        self.words = merged;
+        self.rebuild_text_index();
+        self.rebuild_index_map();
     }
 }
 
