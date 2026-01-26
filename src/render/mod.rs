@@ -127,7 +127,10 @@ pub fn draw(
         }
 
         let color = word_color(word);
-        let text_len = word.text_len.min(TEXT_MAX_DRAW);
+        let mut text_len = word.text_len.min(TEXT_MAX_DRAW);
+        if word.text_len > TEXT_MAX_DRAW && text_len > 0 && word.text[text_len - 1] == '-' {
+            text_len -= 1;
+        }
         for i in 0..text_len {
             let x = sx + i as i32;
             if x < 0 || x >= viewport.width as i32 {
