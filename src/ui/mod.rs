@@ -207,7 +207,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     frame.render_widget(viewport, chunks[1]);
 
                     let footer = Paragraph::new(format!(
-                        "input: {} | mass_total: {:.1} | ↑↓: mass | Enter: spawn | SUN: create sun | q: quit",
+                        "input: {} | mass_total: {:.1} | ↑↓: mass | Enter: spawn | f: focus next | SUN: create sun | q: quit",
                         ui_state.input, ui_state.mass_total
                     ))
                         .block(Block::default().borders(Borders::ALL).title("Controls"));

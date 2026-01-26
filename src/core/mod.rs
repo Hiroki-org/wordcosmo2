@@ -577,9 +577,10 @@ impl World {
         let rem = len % parts;
         let mut out = Vec::with_capacity(parts);
         let mut idx = 0;
+        let sep = config::WORD_JOIN_SEP.to_string();
         for i in 0..parts {
             let take = base + if i < rem { 1 } else { 0 };
-            let group = components[idx..idx + take].join(&config::WORD_JOIN_SEP.to_string());
+            let group = components[idx..idx + take].join(&sep);
             out.push(group);
             idx += take;
         }
