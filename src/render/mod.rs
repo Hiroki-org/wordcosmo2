@@ -1,4 +1,6 @@
-use crate::types::{ColorId, EffectParticle, Vec2, WordSnapshot, TEXT_MAX_DRAW, TRAIL_LEN};
+use crate::types::{
+    ColorId, EffectParticle, Vec2, WordId, WordSnapshot, TEXT_MAX_DRAW, TRAIL_LEN,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
@@ -102,6 +104,7 @@ impl FrameBuffer {
 pub fn draw(
     snapshot: &[WordSnapshot],
     effects: &[EffectParticle],
+    focus_word_id: Option<WordId>,
     camera: &Camera,
     viewport: Viewport,
     frame: &mut FrameBuffer,
@@ -126,7 +129,11 @@ pub fn draw(
             continue;
         }
 
-        let color = word_color(word);
+        let color = if focus_word_id == Some(word.id) {
+            ColorId::Red
+        } else {
+            word_color(word)
+        };
         let mut text_len = word.text_len.min(TEXT_MAX_DRAW);
         if word.text_len > TEXT_MAX_DRAW && text_len > 0 && word.text[text_len - 1] == '-' {
             text_len -= 1;

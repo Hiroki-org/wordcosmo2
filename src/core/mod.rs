@@ -11,7 +11,6 @@ use crate::{
     },
 };
 
-const WORD_JOIN_SEP: char = '\u{1F}';
 const WORD_JOIN_DISPLAY: char = '-';
 
 #[derive(Clone, Debug)]
@@ -102,7 +101,7 @@ impl World {
                 let mut text = [' '; TEXT_MAX_DRAW];
                 let mut len = 0;
                 for (idx, ch) in word.text.chars().take(TEXT_MAX_DRAW).enumerate() {
-                    text[idx] = if ch == WORD_JOIN_SEP {
+                    text[idx] = if ch == config::WORD_JOIN_SEP {
                         WORD_JOIN_DISPLAY
                     } else {
                         ch
@@ -558,13 +557,13 @@ impl World {
         }
         let mut out = String::with_capacity(a.len() + b.len() + 1);
         out.push_str(a);
-        out.push(WORD_JOIN_SEP);
+        out.push(config::WORD_JOIN_SEP);
         out.push_str(b);
         out
     }
 
     fn components(text: &str) -> Vec<String> {
-        text.split(WORD_JOIN_SEP)
+        text.split(config::WORD_JOIN_SEP)
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
@@ -578,9 +577,10 @@ impl World {
         let rem = len % parts;
         let mut out = Vec::with_capacity(parts);
         let mut idx = 0;
+        let sep = config::WORD_JOIN_SEP.to_string();
         for i in 0..parts {
             let take = base + if i < rem { 1 } else { 0 };
-            let group = components[idx..idx + take].join(&WORD_JOIN_SEP.to_string());
+            let group = components[idx..idx + take].join(&sep);
             out.push(group);
             idx += take;
         }
