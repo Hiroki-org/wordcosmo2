@@ -11,12 +11,91 @@ env:
 
 jobs:
   build:
-
+    name: Build
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - name: Build
       run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+
+  test-types:
+    name: Test types (Vec2)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run Vec2 tests
+      run: cargo test types::tests --verbose
+
+  test-spatial:
+    name: Test spatial (SpatialHash)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run SpatialHash tests
+      run: cargo test spatial::tests --verbose
+
+  test-render:
+    name: Test render (FrameBuffer, word_color, draw)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run render tests
+      run: cargo test render::tests --verbose
+
+  test-core-helpers:
+    name: Test core helpers (smoothstep, gravity_cutoff_weight, etc.)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run helper function tests
+      run: cargo test core::tests::helper_functions --verbose
+
+  test-core-world:
+    name: Test core world (creation, stats)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run world creation tests
+      run: cargo test core::tests::world_creation --verbose
+    - name: Run stats tests
+      run: cargo test core::tests::stats --verbose
+
+  test-core-physics:
+    name: Test core physics (mass conservation, wall reflection)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run mass conservation tests
+      run: cargo test core::tests::mass_conservation --verbose
+    - name: Run wall reflection tests
+      run: cargo test core::tests::wall_reflection --verbose
+
+  test-core-sun:
+    name: Test core sun pulse
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run sun pulse tests
+      run: cargo test core::tests::sun_pulse --verbose
+
+  test-core-words:
+    name: Test core words (add, snapshot, consolidate, trail)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Run add_word tests
+      run: cargo test core::tests::add_word --verbose
+    - name: Run snapshot tests
+      run: cargo test core::tests::snapshot --verbose
+    - name: Run consolidate_duplicates tests
+      run: cargo test core::tests::consolidate_duplicates --verbose
+    - name: Run trail tests
+      run: cargo test core::tests::trail --verbose

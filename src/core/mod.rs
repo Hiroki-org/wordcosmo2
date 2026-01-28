@@ -871,3 +871,625 @@ struct SpawnRequest {
     mass_visible: f32,
     mass_dust: f32,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod helper_functions {
+        use super::*;
+
+        mod smoothstep {
+            use super::*;
+
+            #[test]
+            fn returns_zero_at_edge0() {
+                let result = smoothstep(0.0, 1.0, 0.0);
+                assert!((result - 0.0).abs() < 1e-6);
+            }
+
+            #[test]
+            fn returns_one_at_edge1() {
+                let result = smoothstep(0.0, 1.0, 1.0);
+                assert!((result - 1.0).abs() < 1e-6);
+            }
+
+            #[test]
+            fn returns_half_at_midpoint() {
+                let result = smoothstep(0.0, 1.0, 0.5);
+                assert!((result - 0.5).abs() < 1e-6);
+            }
+
+            #[test]
+            fn clamps_below_edge0() {
+                let result = smoothstep(0.0, 1.0, -1.0);
+                assert!((result - 0.0).abs() < 1e-6);
+            }
+
+            #[test]
+            fn clamps_above_edge1() {
+                let result = smoothstep(0.0, 1.0, 2.0);
+                assert!((result - 1.0).abs() < 1e-6);
+            }
+
+            #[test]
+            fn handles_equal_edges() {
+                let result = smoothstep(1.0, 1.0, 0.5);
+                assert!((result - 1.0).abs() < 1e-6);
+            }
+        }
+
+        mod gravity_cutoff_weight {
+            use super::*;
+
+            #[test]
+            fn returns_zero_for_zero_cutoff() {
+                let result = gravity_cutoff_weight(10.0, 0.0);
+                assert_eq!(result, 0.0);
+            }
+
+            #[test]
+            fn returns_zero_beyond_cutoff() {
+                let result = gravity_cutoff_weight(100.0, 50.0);
+                assert_eq!(result, 0.0);
+            }
+
+            #[test]
+            fn returns_one_within_fade_start() {
+                // GRAVITY_CUTOFF_FADE_START = 0.7
+                // cutoff = 100, fade_start = 70
+                let result = gravity_cutoff_weight(10.0, 100.0);
+                assert_eq!(result, 1.0);
+            }
+
+            #[test]
+            fn fades_between_start_and_cutoff() {
+                // cutoff = 100, fade_start = 70
+                let result = gravity_cutoff_weight(85.0, 100.0);
+                assert!(result > 0.0 && result < 1.0);
+            }
+        }
+
+        mod merge_text {
+            use super::*;
+
+            #[test]
+            fn joins_two_texts() {
+                let result = World::merge_text("foo", "bar");
+                assert!(result.contains("foo"));
+                assert!(result.contains("bar"));
+                assert!(result.contains(config::WORD_JOIN_SEP));
+            }
+
+            #[test]
+            fn returns_other_if_first_empty() {
+                let result = World::merge_text("", "bar");
+                assert_eq!(result, "bar");
+            }
+
+            #[test]
+            fn returns_first_if_second_empty() {
+                let result = World::merge_text("foo", "");
+                assert_eq!(result, "foo");
+            }
+        }
+
+        mod components {
+            use super::*;
+
+            #[test]
+            fn splits_by_separator() {
+                let text = format!("foo{}bar{}baz", config::WORD_JOIN_SEP, config::WORD_JOIN_SEP);
+                let result = World::components(&text);
+                assert_eq!(result.len(), 3);
+                assert_eq!(result[0], "foo");
+                assert_eq!(result[1], "bar");
+                assert_eq!(result[2], "baz");
+            }
+
+            #[test]
+            fn single_component_returns_one_element() {
+                let result = World::components("single");
+                assert_eq!(result.len(), 1);
+                assert_eq!(result[0], "single");
+            }
+
+            #[test]
+            fn empty_string_returns_empty_vec() {
+                let result = World::components("");
+                assert!(result.is_empty());
+            }
+        }
+
+        mod split_groups {
+            use super::*;
+
+            #[test]
+            fn splits_into_requested_parts() {
+                let components: Vec<String> = vec!["a", "b", "c", "d"].iter().map(|s| s.to_string()).collect();
+                let result = World::split_groups(&components, 2);
+                assert_eq!(result.len(), 2);
+            }
+
+            #[test]
+            fn limits_parts_to_component_count() {
+                let components: Vec<String> = vec!["a", "b"].iter().map(|s| s.to_string()).collect();
+                let result = World::split_groups(&components, 10);
+                assert_eq!(result.len(), 2);
+            }
+
+            #[test]
+            fn minimum_parts_is_two() {
+                let components: Vec<String> = vec!["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+                let result = World::split_groups(&components, 1);
+                assert_eq!(result.len(), 2);
+            }
+        }
+    }
+
+    mod world_creation {
+        use super::*;
+
+        #[test]
+        fn new_world_has_initial_words() {
+            let world = World::new();
+            assert!(!world.words.is_empty());
+        }
+
+        #[test]
+        fn new_world_has_no_events() {
+            let world = World::new();
+            assert!(world.events.is_empty());
+        }
+
+        #[test]
+        fn new_world_has_no_sun() {
+            let world = World::new();
+            assert!(world.sun.is_none());
+        }
+    }
+
+    mod mass_conservation {
+        use super::*;
+
+        #[test]
+        fn mass_total_equals_visible_plus_dust() {
+            let world = World::new();
+            for word in &world.words {
+                let expected = word.mass_visible + word.mass_dust;
+                assert!((word.mass_total - expected).abs() < 1e-6,
+                    "mass_total {} != mass_visible {} + mass_dust {}",
+                    word.mass_total, word.mass_visible, word.mass_dust);
+            }
+        }
+
+        #[test]
+        fn weathering_preserves_total_mass() {
+            let mut world = World::new();
+            let initial_total: f32 = world.words.iter().map(|w| w.mass_total).sum();
+            
+            // Run several weathering steps
+            for _ in 0..100 {
+                world.weathering_step(config::DT);
+            }
+            
+            let final_total: f32 = world.words.iter().map(|w| w.mass_total).sum();
+            assert!((initial_total - final_total).abs() < 1e-3,
+                "Total mass changed: {} -> {}", initial_total, final_total);
+        }
+
+        #[test]
+        fn weathering_transfers_mass_to_dust() {
+            let mut world = World::new();
+            let initial_visible: f32 = world.words.iter().map(|w| w.mass_visible).sum();
+            let initial_dust: f32 = world.words.iter().map(|w| w.mass_dust).sum();
+            
+            // Run weathering
+            for _ in 0..100 {
+                world.weathering_step(config::DT);
+            }
+            
+            let final_visible: f32 = world.words.iter().map(|w| w.mass_visible).sum();
+            let final_dust: f32 = world.words.iter().map(|w| w.mass_dust).sum();
+            
+            // Visible should decrease
+            assert!(final_visible < initial_visible);
+            // Dust should increase
+            assert!(final_dust > initial_dust);
+        }
+
+        #[test]
+        fn autogenesis_transfers_dust_to_visible() {
+            let mut world = World::new();
+            world.words.clear();
+            world.text_index.clear();
+            world.word_indices.clear();
+            world.dust_pool.clear();
+            
+            // Create a word with all mass as dust
+            let id = world.next_id();
+            let text = "dusty".to_string();
+            world.words.push(Word {
+                id,
+                text: text.clone(),
+                pos: Vec2::ZERO,
+                vel: Vec2::ZERO,
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 0.0,  // All dust
+                mass_dust: 10.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            });
+            world.text_index.insert(text.clone(), id);
+            world.word_indices.insert(id, 0);
+            world.dust_pool.insert(text.clone(), 10.0);
+            
+            let initial_visible = world.words[0].mass_visible;
+            let initial_dust = world.words[0].mass_dust;
+            let initial_total = world.words[0].mass_total;
+            
+            // Run autogenesis (visible count is 0, below K_VISIBLE_MIN)
+            for _ in 0..100 {
+                world.autogenesis_step(config::DT);
+            }
+            
+            let final_visible = world.words[0].mass_visible;
+            let final_dust = world.words[0].mass_dust;
+            let final_total = world.words[0].mass_total;
+            
+            // Visible should increase
+            assert!(final_visible > initial_visible, 
+                "Visible should increase: {} -> {}", initial_visible, final_visible);
+            // Dust should decrease
+            assert!(final_dust < initial_dust,
+                "Dust should decrease: {} -> {}", initial_dust, final_dust);
+            // Total should be conserved
+            assert!((initial_total - final_total).abs() < 1e-3,
+                "Total should be conserved: {} -> {}", initial_total, final_total);
+        }
+    }
+
+    mod wall_reflection {
+        use super::*;
+
+        #[test]
+        fn word_stays_within_bounds_after_integration() {
+            let mut world = World::new();
+            // Set all words to move toward boundaries
+            for word in &mut world.words {
+                word.pos = Vec2::new(config::WORLD_HALF_WIDTH - 1.0, config::WORLD_HALF_HEIGHT - 1.0);
+                word.vel = Vec2::new(100.0, 100.0);
+            }
+            
+            // Run several integration steps
+            for _ in 0..100 {
+                world.integrate(config::DT);
+            }
+            
+            for word in &world.words {
+                assert!(word.pos.x >= -config::WORLD_HALF_WIDTH && word.pos.x <= config::WORLD_HALF_WIDTH,
+                    "Word x position {} out of bounds", word.pos.x);
+                assert!(word.pos.y >= -config::WORLD_HALF_HEIGHT && word.pos.y <= config::WORLD_HALF_HEIGHT,
+                    "Word y position {} out of bounds", word.pos.y);
+            }
+        }
+
+        #[test]
+        fn velocity_reverses_on_wall_hit() {
+            let mut world = World::new();
+            // Clear all words and add a single one at the boundary
+            world.words.clear();
+            world.text_index.clear();
+            world.word_indices.clear();
+            
+            let id = world.next_id();
+            world.words.push(Word {
+                id,
+                text: "test".to_string(),
+                pos: Vec2::new(config::WORLD_HALF_WIDTH + 1.0, 0.0),
+                vel: Vec2::new(10.0, 0.0),
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 10.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            });
+            
+            world.integrate(config::DT);
+            
+            // Velocity x should be reversed (negative)
+            assert!(world.words[0].vel.x < 0.0);
+        }
+    }
+
+    mod sun_pulse {
+        use super::*;
+
+        #[test]
+        fn set_sun_creates_sun() {
+            let mut world = World::new();
+            world.set_sun(Vec2::new(10.0, 10.0));
+            assert!(world.sun.is_some());
+        }
+
+        #[test]
+        fn sun_pulse_affects_nearby_words() {
+            let mut world = World::new();
+            world.words.clear();
+            world.text_index.clear();
+            world.word_indices.clear();
+            
+            let id = world.next_id();
+            world.words.push(Word {
+                id,
+                text: "nearby".to_string(),
+                pos: Vec2::new(0.0, 0.0),
+                vel: Vec2::ZERO,
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 10.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            });
+            
+            let sun = Sun {
+                center: Vec2::new(0.0, 0.0),
+                radius: config::SUN_PULSE_RADIUS,
+                strength: config::SUN_PULSE_STRENGTH,
+            };
+            
+            // Word at center might not change (direction is undefined at center)
+            // But let's test with a word offset from center
+            world.words[0].pos = Vec2::new(5.0, 0.0);
+            world.words[0].vel = Vec2::ZERO;
+            world.apply_sun_pulse(sun, config::DT);
+            
+            // Should have some velocity now
+            assert!(world.words[0].vel.length() > 0.0);
+        }
+
+        #[test]
+        fn sun_pulse_does_not_affect_distant_words() {
+            let mut world = World::new();
+            world.words.clear();
+            world.text_index.clear();
+            world.word_indices.clear();
+            
+            let id = world.next_id();
+            world.words.push(Word {
+                id,
+                text: "distant".to_string(),
+                pos: Vec2::new(config::SUN_PULSE_RADIUS + 100.0, 0.0),
+                vel: Vec2::ZERO,
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 10.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            });
+            
+            let sun = Sun {
+                center: Vec2::new(0.0, 0.0),
+                radius: config::SUN_PULSE_RADIUS,
+                strength: config::SUN_PULSE_STRENGTH,
+            };
+            
+            world.apply_sun_pulse(sun, config::DT);
+            
+            // Should remain at zero velocity
+            assert_eq!(world.words[0].vel, Vec2::ZERO);
+        }
+    }
+
+    mod add_word {
+        use super::*;
+
+        #[test]
+        fn adds_new_word_to_world() {
+            let mut world = World::new();
+            let initial_count = world.words.len();
+            world.add_word("新しい言葉".to_string(), 10.0, Vec2::ZERO);
+            assert!(world.words.len() >= initial_count);
+        }
+
+        #[test]
+        fn absorbed_word_increases_mass() {
+            let mut world = World::new();
+            let text = "テスト".to_string();
+            world.add_word(text.clone(), 10.0, Vec2::ZERO);
+            
+            let initial_mass: f32 = world.words.iter()
+                .filter(|w| w.text == text)
+                .map(|w| w.mass_total)
+                .sum();
+            
+            world.add_word(text.clone(), 5.0, Vec2::ZERO);
+            
+            let final_mass: f32 = world.words.iter()
+                .filter(|w| w.text == text)
+                .map(|w| w.mass_total)
+                .sum();
+            
+            assert!(final_mass > initial_mass);
+        }
+    }
+
+    mod snapshot {
+        use super::*;
+
+        #[test]
+        fn excludes_subvisible_words() {
+            let mut world = World::new();
+            // Set one word to be subvisible
+            if let Some(word) = world.words.first_mut() {
+                word.mass_visible = config::MIN_VISIBLE_MASS / 2.0;
+            }
+            
+            let mut snapshot = Vec::new();
+            world.snapshot(&mut snapshot);
+            
+            // Subvisible word should not appear in snapshot
+            let subvisible_in_snapshot = snapshot.iter()
+                .any(|s| s.mass_visible < config::MIN_VISIBLE_MASS);
+            assert!(!subvisible_in_snapshot);
+        }
+
+        #[test]
+        fn includes_visible_words() {
+            let world = World::new();
+            let visible_count = world.words.iter()
+                .filter(|w| w.mass_visible >= config::MIN_VISIBLE_MASS)
+                .count();
+            
+            let mut snapshot = Vec::new();
+            world.snapshot(&mut snapshot);
+            
+            assert_eq!(snapshot.len(), visible_count);
+        }
+    }
+
+    mod stats {
+        use super::*;
+
+        #[test]
+        fn counts_visible_words() {
+            let world = World::new();
+            let expected = world.words.iter()
+                .filter(|w| w.mass_visible >= config::MIN_VISIBLE_MASS)
+                .count();
+            
+            let stats = world.stats();
+            assert_eq!(stats.visible_count, expected);
+        }
+
+        #[test]
+        fn sums_total_mass() {
+            let world = World::new();
+            let expected: f32 = world.words.iter().map(|w| w.mass_total).sum();
+            
+            let stats = world.stats();
+            assert!((stats.total_mass - expected).abs() < 1e-6);
+        }
+    }
+
+    mod consolidate_duplicates {
+        use super::*;
+
+        #[test]
+        fn merges_words_with_same_text() {
+            let mut world = World::new();
+            world.words.clear();
+            world.text_index.clear();
+            world.word_indices.clear();
+            
+            let text = "duplicate".to_string();
+            let id1 = world.next_id();
+            let id2 = world.next_id();
+            
+            world.words.push(Word {
+                id: id1,
+                text: text.clone(),
+                pos: Vec2::new(0.0, 0.0),
+                vel: Vec2::new(1.0, 0.0),
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 10.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            });
+            
+            world.words.push(Word {
+                id: id2,
+                text: text.clone(),
+                pos: Vec2::new(10.0, 0.0),
+                vel: Vec2::new(-1.0, 0.0),
+                radius: 1.0,
+                mass_total: 5.0,
+                mass_visible: 5.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            });
+            
+            world.consolidate_duplicates();
+            
+            // Should have merged into one word
+            let count = world.words.iter().filter(|w| w.text == text).count();
+            assert_eq!(count, 1);
+            
+            // Mass should be combined
+            let merged = world.words.iter().find(|w| w.text == text).unwrap();
+            assert!((merged.mass_total - 15.0).abs() < 1e-6);
+        }
+    }
+
+    mod trail {
+        use super::*;
+
+        #[test]
+        fn trail_records_position() {
+            let mut word = Word {
+                id: 1,
+                text: "test".to_string(),
+                pos: Vec2::new(5.0, 5.0),
+                vel: Vec2::ZERO,
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 10.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            };
+            
+            World::record_trail(&mut word);
+            
+            assert_eq!(word.trail_len, 1);
+            assert_eq!(word.trail[word.trail_head], word.pos);
+        }
+
+        #[test]
+        fn trail_wraps_around() {
+            let mut word = Word {
+                id: 1,
+                text: "test".to_string(),
+                pos: Vec2::ZERO,
+                vel: Vec2::ZERO,
+                radius: 1.0,
+                mass_total: 10.0,
+                mass_visible: 10.0,
+                mass_dust: 0.0,
+                flags: WordFlags { can_split: false },
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_head: 0,
+                trail_len: 0,
+            };
+            
+            for i in 0..(TRAIL_LEN * 2) {
+                word.pos = Vec2::new(i as f32, 0.0);
+                World::record_trail(&mut word);
+            }
+            
+            // Trail length should cap at TRAIL_LEN
+            assert_eq!(word.trail_len, TRAIL_LEN);
+        }
+    }
+}

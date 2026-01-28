@@ -212,3 +212,289 @@ fn word_color(word: &WordSnapshot) -> ColorId {
         ColorId::White
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod camera {
+        use super::*;
+
+        #[test]
+        fn default_camera_at_origin() {
+            let camera = Camera::default();
+            assert_eq!(camera.pos, Vec2::ZERO);
+            assert_eq!(camera.zoom, 1.0);
+        }
+    }
+
+    mod framebuffer {
+        use super::*;
+
+        mod new {
+            use super::*;
+
+            #[test]
+            fn creates_with_correct_dimensions() {
+                let fb = FrameBuffer::new(80, 24);
+                assert_eq!(fb.width(), 80);
+                assert_eq!(fb.height(), 24);
+            }
+
+            #[test]
+            fn zero_dimensions_creates_empty_buffer() {
+                let fb = FrameBuffer::new(0, 0);
+                assert_eq!(fb.width(), 0);
+                assert_eq!(fb.height(), 0);
+            }
+        }
+
+        mod resize {
+            use super::*;
+
+            #[test]
+            fn changes_dimensions() {
+                let mut fb = FrameBuffer::new(10, 10);
+                fb.resize(20, 15);
+                assert_eq!(fb.width(), 20);
+                assert_eq!(fb.height(), 15);
+            }
+
+            #[test]
+            fn clears_cells_on_resize() {
+                let mut fb = FrameBuffer::new(10, 10);
+                fb.resize(10, 10);
+                let cell = fb.get(0, 0);
+                assert_eq!(cell.ch, ' ');
+            }
+        }
+
+        mod clear {
+            use super::*;
+
+            #[test]
+            fn resets_all_cells_to_space() {
+                let mut fb = FrameBuffer::new(10, 10);
+                fb.clear();
+                for y in 0..10 {
+                    for x in 0..10 {
+                        let cell = fb.get(x, y);
+                        assert_eq!(cell.ch, ' ');
+                        assert_eq!(cell.color, ColorId::White);
+                    }
+                }
+            }
+        }
+
+        mod set {
+            use super::*;
+
+            #[test]
+            fn sets_cell_with_higher_mass() {
+                let mut fb = FrameBuffer::new(10, 10);
+                fb.set(5, 5, 'A', 10.0, ColorId::Blue);
+                let cell = fb.get(5, 5);
+                assert_eq!(cell.ch, 'A');
+                assert_eq!(cell.color, ColorId::Blue);
+            }
+
+            #[test]
+            fn does_not_overwrite_with_lower_mass() {
+                let mut fb = FrameBuffer::new(10, 10);
+                fb.set(5, 5, 'A', 10.0, ColorId::Blue);
+                fb.set(5, 5, 'B', 5.0, ColorId::Red);
+                let cell = fb.get(5, 5);
+                assert_eq!(cell.ch, 'A');
+            }
+
+            #[test]
+            fn out_of_bounds_is_ignored() {
+                let mut fb = FrameBuffer::new(10, 10);
+                fb.set(100, 100, 'X', 10.0, ColorId::Blue);
+                // Should not panic
+            }
+        }
+    }
+
+    mod word_color_fn {
+        use super::*;
+
+        fn make_snapshot(mass_visible: f32, mass_total: f32, mass_dust: f32, vel: Vec2) -> WordSnapshot {
+            WordSnapshot {
+                id: 1,
+                text: [' '; TEXT_MAX_DRAW],
+                text_len: 0,
+                pos: Vec2::ZERO,
+                radius: 1.0,
+                mass_visible,
+                mass_total,
+                mass_dust,
+                vel,
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_len: 0,
+                trail_head: 0,
+            }
+        }
+
+        #[test]
+        fn high_dust_ratio_returns_gray() {
+            let word = make_snapshot(3.0, 10.0, 7.0, Vec2::ZERO);
+            assert_eq!(word_color(&word), ColorId::Gray);
+        }
+
+        #[test]
+        fn high_speed_returns_cyan() {
+            let word = make_snapshot(10.0, 10.0, 0.0, Vec2::new(15.0, 0.0));
+            assert_eq!(word_color(&word), ColorId::Cyan);
+        }
+
+        #[test]
+        fn high_mass_returns_yellow() {
+            let word = make_snapshot(25.0, 25.0, 0.0, Vec2::ZERO);
+            assert_eq!(word_color(&word), ColorId::Yellow);
+        }
+
+        #[test]
+        fn medium_high_mass_returns_magenta() {
+            let word = make_snapshot(15.0, 15.0, 0.0, Vec2::ZERO);
+            assert_eq!(word_color(&word), ColorId::Magenta);
+        }
+
+        #[test]
+        fn medium_mass_returns_blue() {
+            let word = make_snapshot(8.0, 8.0, 0.0, Vec2::ZERO);
+            assert_eq!(word_color(&word), ColorId::Blue);
+        }
+
+        #[test]
+        fn low_mass_returns_white() {
+            let word = make_snapshot(3.0, 3.0, 0.0, Vec2::ZERO);
+            assert_eq!(word_color(&word), ColorId::White);
+        }
+
+        #[test]
+        fn zero_mass_total_does_not_panic() {
+            let word = make_snapshot(0.0, 0.0, 0.0, Vec2::ZERO);
+            // Should not panic
+            let _ = word_color(&word);
+        }
+    }
+
+    mod draw_fn {
+        use super::*;
+
+        #[test]
+        fn empty_snapshot_produces_empty_frame() {
+            let snapshot: Vec<WordSnapshot> = Vec::new();
+            let effects: Vec<EffectParticle> = Vec::new();
+            let camera = Camera::default();
+            let viewport = Viewport { width: 80, height: 24 };
+            let mut frame = FrameBuffer::new(80, 24);
+            
+            draw(&snapshot, &effects, None, &camera, viewport, &mut frame);
+            
+            for y in 0..24 {
+                for x in 0..80 {
+                    let cell = frame.get(x, y);
+                    assert_eq!(cell.ch, ' ');
+                }
+            }
+        }
+
+        #[test]
+        fn word_at_center_is_visible() {
+            let mut text = [' '; TEXT_MAX_DRAW];
+            text[0] = 'H';
+            text[1] = 'i';
+            let snapshot = vec![WordSnapshot {
+                id: 1,
+                text,
+                text_len: 2,
+                pos: Vec2::ZERO,
+                radius: 1.0,
+                mass_visible: 10.0,
+                mass_total: 10.0,
+                mass_dust: 0.0,
+                vel: Vec2::ZERO,
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_len: 0,
+                trail_head: 0,
+            }];
+            let effects: Vec<EffectParticle> = Vec::new();
+            let camera = Camera::default();
+            let viewport = Viewport { width: 80, height: 24 };
+            let mut frame = FrameBuffer::new(80, 24);
+            
+            draw(&snapshot, &effects, None, &camera, viewport, &mut frame);
+            
+            let center_x = 40;
+            let center_y = 12;
+            let cell = frame.get(center_x, center_y);
+            assert_eq!(cell.ch, 'H');
+        }
+
+        #[test]
+        fn focused_word_is_red() {
+            let mut text = [' '; TEXT_MAX_DRAW];
+            text[0] = 'X';
+            let snapshot = vec![WordSnapshot {
+                id: 1,
+                text,
+                text_len: 1,
+                pos: Vec2::ZERO,
+                radius: 1.0,
+                mass_visible: 10.0,
+                mass_total: 10.0,
+                mass_dust: 0.0,
+                vel: Vec2::ZERO,
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_len: 0,
+                trail_head: 0,
+            }];
+            let effects: Vec<EffectParticle> = Vec::new();
+            let camera = Camera::default();
+            let viewport = Viewport { width: 80, height: 24 };
+            let mut frame = FrameBuffer::new(80, 24);
+            
+            draw(&snapshot, &effects, Some(1), &camera, viewport, &mut frame);
+            
+            let cell = frame.get(40, 12);
+            assert_eq!(cell.color, ColorId::Red);
+        }
+
+        #[test]
+        fn effect_overrides_word() {
+            let mut text = [' '; TEXT_MAX_DRAW];
+            text[0] = 'W';
+            let snapshot = vec![WordSnapshot {
+                id: 1,
+                text,
+                text_len: 1,
+                pos: Vec2::ZERO,
+                radius: 1.0,
+                mass_visible: 10.0,
+                mass_total: 10.0,
+                mass_dust: 0.0,
+                vel: Vec2::ZERO,
+                trail: [Vec2::ZERO; TRAIL_LEN],
+                trail_len: 0,
+                trail_head: 0,
+            }];
+            let effects = vec![EffectParticle {
+                pos: Vec2::ZERO,
+                vel: Vec2::ZERO,
+                ttl: 1.0,
+                glyph: '*',
+                color: ColorId::Yellow,
+            }];
+            let camera = Camera::default();
+            let viewport = Viewport { width: 80, height: 24 };
+            let mut frame = FrameBuffer::new(80, 24);
+            
+            draw(&snapshot, &effects, None, &camera, viewport, &mut frame);
+            
+            let cell = frame.get(40, 12);
+            assert_eq!(cell.ch, '*');
+        }
+    }
+}
