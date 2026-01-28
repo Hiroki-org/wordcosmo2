@@ -1033,7 +1033,12 @@ mod tests {
         #[test]
         fn new_world_has_initial_words() {
             let world = World::new();
-            assert!(!world.words.is_empty());
+            assert!(!world.words.is_empty(), "New world should have initial words");
+            // Note: INIT_WORDS is 24 but word_list has only 12 unique texts
+            // So actual word count can be less due to absorption
+            assert!(world.words.len() >= 1, 
+                "New world should have at least 1 word, but has {}",
+                world.words.len());
         }
 
         #[test]
@@ -1074,8 +1079,10 @@ mod tests {
             }
             
             let final_total: f32 = world.words.iter().map(|w| w.mass_total).sum();
-            assert!((initial_total - final_total).abs() < 1e-3,
-                "Total mass changed: {} -> {}", initial_total, final_total);
+            // Tolerance is proportional to initial mass to account for floating-point accumulation
+            let tolerance = initial_total * 1e-5;
+            assert!((initial_total - final_total).abs() < tolerance,
+                "Total mass changed: {} -> {} (tolerance: {})", initial_total, final_total, tolerance);
         }
 
         #[test]
@@ -1300,8 +1307,15 @@ mod tests {
         fn adds_new_word_to_world() {
             let mut world = World::new();
             let initial_count = world.words.len();
-            world.add_word("新しい言葉".to_string(), 10.0, Vec2::ZERO);
-            assert!(world.words.len() >= initial_count);
+            let new_text = "新しい言葉".to_string();
+            world.add_word(new_text.clone(), 10.0, Vec2::ZERO);
+            
+            // Verify the word was added (either as new or absorbed into existing)
+            let word_exists = world.words.iter().any(|w| w.text.contains("新しい言葉"));
+            assert!(word_exists, "Added word should exist in the world");
+            assert!(world.words.len() >= initial_count, 
+                "Word count should not decrease after adding: {} -> {}", 
+                initial_count, world.words.len());
         }
 
         #[test]
@@ -1314,6 +1328,7 @@ mod tests {
                 .filter(|w| w.text == text)
                 .map(|w| w.mass_total)
                 .sum();
+            assert!(initial_mass >= 10.0, "Initial word should have at least the added mass");
             
             world.add_word(text.clone(), 5.0, Vec2::ZERO);
             
@@ -1322,7 +1337,8 @@ mod tests {
                 .map(|w| w.mass_total)
                 .sum();
             
-            assert!(final_mass > initial_mass);
+            assert!(final_mass > initial_mass,
+                "Mass should increase after absorption: {} -> {}", initial_mass, final_mass);
         }
     }
 
@@ -1332,10 +1348,11 @@ mod tests {
         #[test]
         fn excludes_subvisible_words() {
             let mut world = World::new();
+            assert!(!world.words.is_empty(), "World should have initial words for this test");
+            
             // Set one word to be subvisible
-            if let Some(word) = world.words.first_mut() {
-                word.mass_visible = config::MIN_VISIBLE_MASS / 2.0;
-            }
+            let word = world.words.first_mut().expect("World should have at least one word");
+            word.mass_visible = config::MIN_VISIBLE_MASS / 2.0;
             
             let mut snapshot = Vec::new();
             world.snapshot(&mut snapshot);
